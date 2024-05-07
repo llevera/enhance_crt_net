@@ -1,0 +1,12 @@
+# Log files
+*.log
+
+# Binary Numpy Arrays
+*.npy
+
+# Model HDFs
+*.h5
+
+# Datasets
+training_data
+datasets
