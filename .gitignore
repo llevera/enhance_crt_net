@@ -10,3 +10,6 @@
 # Datasets
 training_data
 datasets
+
+# pycache
+__pycache__
