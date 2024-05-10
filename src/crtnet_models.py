@@ -33,12 +33,14 @@ import keras_nlp
 # transformer feedforward is 256 units not 64
 def crt_net_original(
         n_classes,
+        input_shape,
         n_vgg_blocks=1,
         binary=False,
         use_focal=False,
         metrics=['accuracy', 'f1'],
         d_model=128,
-        d_ffn=None
+        d_ffn=None,
+        learning_rate=0.001,
     ):
     """
     n_vgg_blocks: more blocks for more downsampling of signal length.
@@ -50,7 +52,7 @@ def crt_net_original(
     - use_focal: use for imbalanced classes
     - see more information in `model_compile_helper()` definition.
     """
-    input = tf.keras.Input(shape=None)
+    input = tf.keras.Input(shape=input_shape)
     x = input
     x = VGGNet(d_model, n_blocks=n_vgg_blocks)(x)
     x = BiGRU(d_model)(x)
@@ -61,19 +63,21 @@ def crt_net_original(
     # x = tf.keras.layers.Dense(d_ffn, activation='relu')(x) # These 2 dense layers might not be the actual CRT-Net arch.
     # x = tf.keras.layers.Dense(d_ffn, activation='relu')(x) # Because each transformerencoder has a 2 layer feed-forward network.
 
-    # x = tf.keras.layers.Dense(4 * n_classes, activation='relu')(x) # You might consider using this still to compare.
+    x = tf.keras.layers.Dense(2 * n_classes, activation='relu')(x) # You might consider using this still to compare.
 
-    model = model_compile_helper(input, x, n_classes, binary, use_focal, metrics)
+    model = model_compile_helper(input, x, n_classes, binary, use_focal, metrics, learning_rate)
     return model
 
 def crt_net_original_alt(
         n_classes,
+        input_shape,
         n_vgg_blocks=1,
         binary=False,
         use_focal=False,
         metrics=['accuracy', 'f1'],
         d_model=128,
-        d_ffn=None
+        d_ffn=None,
+        learning_rate=0.001,
     ):
     """
     The provided CRT-Net models.py has some alterations which may be the result of tuning the model:
@@ -84,7 +88,7 @@ def crt_net_original_alt(
     - Additional dense layer before output (units=4*n_classes, SeLU activation)
     """
     
-    input = tf.keras.Input(shape=None)
+    input = tf.keras.Input(shape=input_shape)
     x = input
     x = VGGNet(d_model, n_blocks=n_vgg_blocks, activation=tf.keras.layers.LeakyReLU, activation_kwargs=dict(alpha=0.3), dropout=0.2, use_stride=True)(x)
     x = BiGRU(d_model, activation=tf.keras.layers.LeakyReLU, activation_kwargs=dict(alpha=0.3), dropout=0.2)(x)
@@ -92,12 +96,12 @@ def crt_net_original_alt(
     x = tf.keras.layers.Dropout(0.2)(x)
     x = tf.keras.layers.GlobalAveragePooling1D()(x)
 
-    x = tf.keras.layers.Dense(4 * n_classes, activation='selu')(x)
+    x = tf.keras.layers.Dense(2 * n_classes, activation='selu')(x)
 
-    model = model_compile_helper(input, x, n_classes, binary, use_focal, metrics)
+    model = model_compile_helper(input, x, n_classes, binary, use_focal, metrics, learning_rate)
     return model
 
-def model_compile_helper(input, x, n_classes, binary, use_focal, metrics):
+def model_compile_helper(input, x, n_classes, binary, use_focal, metrics, learning_rate):
     """
     Attaches output layer and compiles the model.
 
@@ -112,14 +116,15 @@ def model_compile_helper(input, x, n_classes, binary, use_focal, metrics):
 
     activation = 'softmax'
     loss = 'categorical_focal_crossentropy' if use_focal else 'categorical_crossentropy'
+    optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
 
     if binary:
         activation = 'sigmoid'
         loss = 'binary_focal_crossentropy' if use_focal else 'binary_crossentropy'
 
-    output = tf.keras.Layers.Dense(n_classes, activation=activation)(x)
+    output = tf.keras.layers.Dense(n_classes, activation=activation)(x)
     model = tf.keras.Model(input, output)
-    model.compile(optimizer="adam", loss=loss, metrics=metrics)
+    model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
     return model
 
 class VGGBlock(tf.keras.layers.Layer):
@@ -180,13 +185,13 @@ class VGGNet(tf.keras.layers.Layer):
             **kwargs
         ):
         super(VGGNet, self).__init__(**kwargs)
-        self.blocks = [ BiGRU(
-            d_cnn / (2**i),
+        self.blocks = [ VGGBlock(
+            d_cnn,
             activation=activation,
             activation_kwargs=activation_kwargs,
             dropout=dropout,
             use_stride=use_stride
-            ) for i in range(n_blocks) ]
+            ) for _ in range(n_blocks) ]
 
     def call(self, x):
         for block in self.blocks:
