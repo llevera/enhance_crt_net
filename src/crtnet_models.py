@@ -85,7 +85,7 @@ def crt_net_original_alt(
     - Dropout (rate=0.2) after every VGG block and the BiGRU layer.
     - Sine position encoding uses max position encoding of 2048, instead of default 10000
     - Additional dropout between transformer encoders and global pooling
-    - Additional dense layer before output (units=4*n_classes, SeLU activation)
+    - Additional dense layer before output (units=2*n_classes, SeLU activation)
     """
     
     input = tf.keras.Input(shape=input_shape)
