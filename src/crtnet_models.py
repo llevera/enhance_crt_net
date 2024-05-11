@@ -57,12 +57,8 @@ def crt_net_original(
     x = VGGNet(d_model, n_blocks=n_vgg_blocks)(x)
     x = BiGRU(d_model)(x)
     x = StackedTransformerEncoder(4, 8, d_model * 2 if d_ffn is None else d_ffn)(x)
+
     x = tf.keras.layers.GlobalAveragePooling1D()(x)
-
-    # x = tf.keras.layers.Dropout(0.2)(x)
-    # x = tf.keras.layers.Dense(d_ffn, activation='relu')(x) # These 2 dense layers might not be the actual CRT-Net arch.
-    # x = tf.keras.layers.Dense(d_ffn, activation='relu')(x) # Because each transformerencoder has a 2 layer feed-forward network.
-
     x = tf.keras.layers.Dense(2 * n_classes, activation='relu')(x) # You might consider using this still to compare.
 
     model = model_compile_helper(input, x, n_classes, binary, use_focal, metrics, learning_rate)
@@ -92,12 +88,62 @@ def crt_net_original_alt(
     x = input
     x = VGGNet(d_model, n_blocks=n_vgg_blocks, activation=tf.keras.layers.LeakyReLU, activation_kwargs=dict(alpha=0.3), dropout=0.2, use_stride=True)(x)
     x = BiGRU(d_model, activation=tf.keras.layers.LeakyReLU, activation_kwargs=dict(alpha=0.3), dropout=0.2)(x)
-    x = StackedTransformerEncoder(4, 8, d_model * 2 if d_ffn is None else d_ffn, max_wavelength=2048)(x)
-    x = tf.keras.layers.Dropout(0.2)(x)
-    x = tf.keras.layers.GlobalAveragePooling1D()(x)
+    x = StackedTransformerEncoder(4, 8, d_model * 2 if d_ffn is None else d_ffn, max_wavelength=2048, dropout=0.2)(x)
 
+    x = tf.keras.layers.GlobalAveragePooling1D()(x)
     x = tf.keras.layers.Dense(2 * n_classes, activation='selu')(x)
 
+    model = model_compile_helper(input, x, n_classes, binary, use_focal, metrics, learning_rate)
+    return model
+
+def crt_net_modular(
+        n_classes,
+        input_shape,
+        cnn_type='vggnet',
+        rnn_type='bigru',
+        att_type='transformer',
+        alternate_arch=False,
+        n_vgg_blocks=1,
+        binary=False,
+        use_focal=False,
+        metrics=['accuracy', 'f1_score'],
+        d_model=128,
+        learning_rate=0.001,
+    ):
+    input = tf.keras.Input(shape=input_shape)
+    x = input
+
+    if cnn_type == 'vggnet':
+        if alternate_arch:
+            x = VGGNet(d_model, n_blocks=n_vgg_blocks, activation=tf.keras.layers.LeakyReLU, activation_kwargs=dict(alpha=0.3), dropout=0.2, use_stride=True)(x)
+        else:
+            x = VGGNet(d_model, n_blocks=n_vgg_blocks)(x)
+    elif cnn_type == 'squeezenet':
+        raise NotImplementedError()
+    elif cnn_type == 'cnnsvm':
+        raise NotImplementedError()
+        
+    if rnn_type == 'bigru':
+        if alternate_arch:
+            x = BiGRU(d_model, activation=tf.keras.layers.LeakyReLU, activation_kwargs=dict(alpha=0.3), dropout=0.2)(x)
+        else:
+            x = BiGRU(d_model)(x)
+    
+    if att_type == 'transformer':
+        if alternate_arch:
+            x = StackedTransformerEncoder(4, 8, d_model * 2, max_wavelength=2048, dropout=0.2)(x)
+        else:
+            x = StackedTransformerEncoder(4, 8, d_model * 2)(x)
+    elif cnn_type == 'rwkv':
+        raise NotImplementedError()
+    
+    x = tf.keras.layers.GlobalAveragePooling1D()(x)
+
+    if alternate_arch:
+        x = tf.keras.layers.Dense(2 * n_classes, activation='selu')(x)
+    else:
+        x = tf.keras.layers.Dense(2 * n_classes, activation='relu')(x)
+    
     model = model_compile_helper(input, x, n_classes, binary, use_focal, metrics, learning_rate)
     return model
 
@@ -234,17 +280,20 @@ class StackedTransformerEncoder(tf.keras.layers.Layer):
     TransformerEncoder
     - x -> MultiHeadAttention -> Dropout -> x + Normalization -> x' -> FeedForward -> Dropout -> x' + Normalization
     """
-    def __init__(self, n_blocks, n_heads, d_ffn, max_wavelength=10000, **kwargs):
+    def __init__(self, n_blocks, n_heads, d_ffn, max_wavelength=10000, dropout=0.0, **kwargs):
         super(StackedTransformerEncoder, self).__init__(**kwargs)
         self.pos_encoding = keras_nlp.layers.SinePositionEncoding(max_wavelength=max_wavelength)
         self.transformers = [
             keras_nlp.layers.TransformerEncoder(d_ffn, n_heads) for _ in range(n_blocks)
         ]
+        self.dropout = tf.keras.layers.Dropout(dropout) if dropout > 0.0 else None
 
     def call(self, x):
         x = x + self.pos_encoding(x)
         for transformer in self.transformers:
             x = transformer(x)
+        if self.dropout is not None:
+            x = self.dropout(x)
         return x
 
 # class FeedForward(tf.keras.layers.Layer):
