@@ -1,6 +1,7 @@
 import tensorflow as tf
 import keras_nlp
-#import keras_rkwv
+import tensorflow_probability # just making sure this is installed
+from src.keras_rwkv.models.v4 import RwkvBackboneModified
 
 # Example usage on crt_net_original_alt():
 #
@@ -104,6 +105,7 @@ def crt_net_modular(
         att_type='transformer',
         alternate_arch=False,
         n_vgg_blocks=1,
+        rkwv_stack_multiplier=1,
         binary=False,
         use_focal=False,
         metrics=['accuracy', 'f1_score'],
@@ -134,8 +136,11 @@ def crt_net_modular(
             x = StackedTransformerEncoder(4, 8, d_model * 2, max_wavelength=2048, dropout=0.2)(x)
         else:
             x = StackedTransformerEncoder(4, 8, d_model * 2)(x)
-    elif cnn_type == 'rwkv':
-        raise NotImplementedError()
+    elif att_type == 'rwkv':
+        if alternate_arch:
+            x = StackedRWKV(n_blocks=4 * rkwv_stack_multiplier, d_ffn=d_model * 2, dropout=0.2)(x)
+        else:
+            x = StackedRWKV(n_blocks=4 * rkwv_stack_multiplier, d_ffn=d_model * 2)(x)
     
     x = tf.keras.layers.GlobalAveragePooling1D()(x)
 
@@ -292,6 +297,20 @@ class StackedTransformerEncoder(tf.keras.layers.Layer):
         x = x + self.pos_encoding(x)
         for transformer in self.transformers:
             x = transformer(x)
+        if self.dropout is not None:
+            x = self.dropout(x)
+        return x
+    
+class StackedRWKV(tf.keras.layers.Layer):
+    def __init__(self, n_blocks, d_ffn, max_wavelength=10000, dropout=0.0, **kwargs):
+        super(StackedRWKV, self).__init__(**kwargs)
+        self.pos_encoding = keras_nlp.layers.SinePositionEncoding(max_wavelength=max_wavelength)
+        self.rwkv = RwkvBackboneModified(hidden_dim=d_ffn, num_layers=n_blocks)
+        self.dropout = tf.keras.layers.Dropout(dropout) if dropout > 0.0 else None
+
+    def call(self, x):
+        x = x + self.pos_encoding(x)
+        x = self.rwkv(x)
         if self.dropout is not None:
             x = self.dropout(x)
         return x
