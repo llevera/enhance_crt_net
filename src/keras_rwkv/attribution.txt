@@ -1,0 +1,6 @@
+name="keras-rwkv"
+description="RWKV language model in keras"
+url="https://github.com/jackd/keras-rwkv"
+author="Dominic Jack"
+author_email="thedomjack@gmail.com"
+license="Apache 2.0"
