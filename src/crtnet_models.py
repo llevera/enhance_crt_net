@@ -136,6 +136,11 @@ def crt_net_modular(
             x = StackedTransformerEncoder(4, 8, d_model * 2, max_wavelength=2048, dropout=0.2)(x)
         else:
             x = StackedTransformerEncoder(4, 8, d_model * 2)(x)
+    elif att_type == 'our_transformer':
+        if alternate_arch:
+            x = StackedTransformerEncoderCustom(4, 8, d_model * 2, max_wavelength=2048, dropout=0.2)(x)
+        else:
+            x = StackedTransformerEncoderCustom(4, 8, d_model * 2)(x)
     elif att_type == 'rwkv':
         if alternate_arch:
             x = StackedRWKV(n_blocks=4 * rkwv_stack_multiplier, d_ffn=d_model * 2, dropout=0.2)(x)
@@ -301,6 +306,23 @@ class StackedTransformerEncoder(tf.keras.layers.Layer):
             x = self.dropout(x)
         return x
     
+class StackedTransformerEncoderCustom(tf.keras.layers.Layer):
+    def __init__(self, n_blocks, n_heads, d_model, max_wavelength=10000, dropout=0.0, **kwargs):
+        super(StackedTransformerEncoderCustom, self).__init__(**kwargs)
+        self.pos_encoding = keras_nlp.layers.SinePositionEncoding(max_wavelength=max_wavelength)
+        self.transformers = [
+            TransformerEncoder(d_model, n_heads, dropout=dropout) for _ in range(n_blocks)
+        ]
+        self.dropout = tf.keras.layers.Dropout(dropout) if dropout > 0.0 else None
+
+    def call(self, x):
+        x = x + self.pos_encoding(x)
+        for transformer in self.transformers:
+            x = transformer(x)
+        if self.dropout is not None:
+            x = self.dropout(x)
+        return x
+    
 class StackedRWKV(tf.keras.layers.Layer):
     def __init__(self, n_blocks, d_ffn, max_wavelength=10000, dropout=0.0, **kwargs):
         super(StackedRWKV, self).__init__(**kwargs)
@@ -315,40 +337,42 @@ class StackedRWKV(tf.keras.layers.Layer):
             x = self.dropout(x)
         return x
 
-# class FeedForward(tf.keras.layers.Layer):
-#     def __init__(self, d_ffn, d_model, **kwargs):
-#         super(FeedForward, self).__init__(**kwargs)
-#         self.fully_connected1 = tf.keras.layers.Dense(d_ffn)
-#         self.fully_connected2 = tf.keras.layers.Dense(d_model)
-#         self.activation = tf.keras.layers.ReLU()
+class FeedForward(tf.keras.layers.Layer):
+    def __init__(self, d_ffn, d_model, **kwargs):
+        super(FeedForward, self).__init__(**kwargs)
+        self.fully_connected1 = tf.keras.layers.Dense(d_ffn)
+        self.fully_connected2 = tf.keras.layers.Dense(d_model)
+        self.activation = tf.keras.layers.ReLU()
     
-#     def call(self, x):
-#         x_fc1 = self.fully_connected1(x)
-#         x_fc2 = self.fully_connected2(x_fc1)
-#         return self.activation(x_fc2);
+    def call(self, x):
+        x = self.fully_connected1(x)
+        x = self.fully_connected2(x)
+        return self.activation(x);
 
-# class AddNormalization(tf.keras.layers.Layer):
-#     def __init__(self, **kwargs):
-#         super(AddNormalization, self).__init__(**kwargs)
-#         self.layer_norm = tf.keras.layers.LayerNormalization()
+class AddNormalization(tf.keras.layers.Layer):
+    def __init__(self, **kwargs):
+        super(AddNormalization, self).__init__(**kwargs)
+        self.layer_norm = tf.keras.layers.LayerNormalization(epsilon=1e-6)
 
-#     def call(self, x, add_x):
-#         return self.layer_norm(x + add_x)
+    def call(self, x, add_x):
+        return self.layer_norm(x + add_x)
 
-# class TransformerEncoder(tf.keras.layers.Layer):
-#     def __init__(self, n_heads, d_keys, d_values, d_model, d_ffn, dropout_rate, **kwargs):
-#         super(TransformerEncoder, self).__init__(**kwargs)
-#         self.multihead_attention = tf.keras.layers.MultiHeadAttention(n_heads, d_keys, d_values, d_model)
-#         self.dropout1 = tf.keras.layers.Dropout(dropout_rate)
-#         self.add_norm1 = AddNormalization(d_ffn, d_model)
-#         self.feed_forward = FeedForward(d_ffn, d_model)
-#         self.dropout2 = tf.keras.layers.Dropout(dropout_rate)
-#         self.add_norm2 = AddNormalization(d_ffn, d_model)
+class TransformerEncoder(tf.keras.layers.Layer):
+    def __init__(self, d_model, n_heads, dropout, **kwargs):
+        super(TransformerEncoder, self).__init__(**kwargs)
+        self.multihead_attention = tf.keras.layers.MultiHeadAttention(n_heads, d_model, dropout=dropout)
+        self.dropout1 = tf.keras.layers.Dropout(dropout)
+        self.add_norm1 = AddNormalization()
+        self.feed_forward = FeedForward(4 * d_model, d_model)
+        self.dropout2 = tf.keras.layers.Dropout(dropout)
+        self.add_norm2 = AddNormalization()
 
-#     def call(self, x, pad_mask, training):
-#         mha_x = self.multihead_attention(x, x, x, pad_mask)
-#         mha_x = self.dropout1(mha_x, training=training)
-#         add_norm_x = self.add_norm1(x, mha_x)
-#         ffn_x = self.feed_forward(add_norm_x)
-#         ffn_x = self.dropout2(ffn_x, training=training)
-#         return self.add_norm2(add_norm_x, ffn_x)
+    def call(self, x):
+        mha_x = self.multihead_attention(x, x)
+        mha_x = self.dropout1(mha_x)
+        x = self.add_norm1(mha_x, x)
+
+        ffn_x = self.feed_forward(x)
+        ffn_x = self.dropout2(ffn_x)
+        x = self.add_norm2(ffn_x, x)
+        return x
