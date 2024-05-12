@@ -107,6 +107,7 @@ def crt_net_modular(
         n_vgg_blocks=1,
         rkwv_stack_multiplier=1,
         extra_dense=False,
+        use_selu=True,
         binary=False,
         use_focal=False,
         metrics=['accuracy', 'f1_score'],
@@ -150,7 +151,7 @@ def crt_net_modular(
     
     x = tf.keras.layers.GlobalAveragePooling1D()(x)
 
-    dense_activation = 'selu' if alternate_arch else 'relu'
+    dense_activation = 'selu' if alternate_arch and use_selu else 'relu'
 
     if extra_dense:
         x = tf.keras.layers.Dense(2 * d_model, activation=dense_activation)(x)
