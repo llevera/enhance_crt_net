@@ -2,6 +2,9 @@ import tensorflow as tf
 import keras_nlp
 import tensorflow_probability # just making sure this is installed
 from src.keras_rwkv.models.v4 import RwkvBackboneModified
+from tensorflow.keras import backend as K
+from keras.metrics import F1Score
+
 
 # Example usage on crt_net_original_alt():
 #
@@ -381,3 +384,121 @@ class TransformerEncoder(tf.keras.layers.Layer):
         ffn_x = self.dropout2(ffn_x)
         x = self.add_norm2(ffn_x, x)
         return x
+
+def create_crtnet_original(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
+    tf.keras.backend.clear_session()
+    return crt_net_original(
+        n_classes=num_classes,
+        input_shape=(None,number_of_leads),
+        n_vgg_blocks=5, # increased signal length so more CNN blocks to downsample (3000 / 2**5 -> 94)
+        binary=multilabel, # set this to true if using multilabel output (disables softmax and categorical cross entropy). CPSC can be multilabel.
+        use_focal=True, # addresses significant class imbalance (enables focal cross entropy)
+        metrics=['accuracy',F1Score()], # May be better to evaluate on F1 score if using early stopping
+        d_model=128, # default feature dim size (d_ffn set to 2*d_model)
+        learning_rate=learning_rate
+    )
+
+def create_crtnet_our_transformer(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
+    tf.keras.backend.clear_session()
+    return crt_net_modular(
+        n_classes=num_classes,
+        input_shape=(None,number_of_leads),
+        n_vgg_blocks=5, # increased signal length so more CNN blocks to downsample (3000 / 2**5 -> 94)
+        binary=multilabel, # set this to true if using multilabel output (disables softmax and categorical cross entropy). CPSC can be multilabel.
+        use_focal=True, # addresses significant class imbalance (enables focal cross entropy)
+        metrics=['accuracy',F1Score()], # May be better to evaluate on F1 score if using early stopping
+        d_model=128, # default feature dim size (d_ffn set to 2*d_model)
+        learning_rate=learning_rate,
+        alternate_arch=True,
+        att_type='our_transformer'
+    )
+
+def create_crtnet_dense(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
+    tf.keras.backend.clear_session()
+    return crt_net_modular(
+        n_classes=num_classes,
+        input_shape=(None,number_of_leads),
+        n_vgg_blocks=5, # increased signal length so more CNN blocks to downsample (3000 / 2**5 -> 94)
+        binary=multilabel, # set this to true if using multilabel output (disables softmax and categorical cross entropy). CPSC can be multilabel.
+        use_focal=True, # addresses significant class imbalance (enables focal cross entropy)
+        metrics=['accuracy', F1Score()], # May be better to evaluate on F1 score if using early stopping
+        d_model=128, # default feature dim size (d_ffn set to 2*d_model)
+        learning_rate=learning_rate,
+        alternate_arch=True,
+        extra_dense=True,
+        att_type='transformer'
+    )
+
+def create_crtnet_no_attn(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
+    tf.keras.backend.clear_session()
+    return crt_net_modular(
+        n_classes=num_classes,
+        input_shape=(None,number_of_leads),
+        n_vgg_blocks=5, # increased signal length so more CNN blocks to downsample (3000 / 2**5 -> 94)
+        binary=multilabel, # set this to true if using multilabel output (disables softmax and categorical cross entropy). CPSC can be multilabel.
+        use_focal=True, # addresses significant class imbalance (enables focal cross entropy)
+        metrics=['accuracy',F1Score()], # May be better to evaluate on F1 score if using early stopping
+        d_model=128, # default feature dim size (d_ffn set to 2*d_model)
+        learning_rate=learning_rate,
+        alternate_arch=True,
+        att_type='none'
+    )
+
+def create_crtnet_dense_noselu(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
+    tf.keras.backend.clear_session()
+    return crt_net_modular(
+        n_classes=num_classes,
+        input_shape=(None,number_of_leads),
+        n_vgg_blocks=5, # increased signal length so more CNN blocks to downsample (3000 / 2**5 -> 94)
+        binary=multilabel, # set this to true if using multilabel output (disables softmax and categorical cross entropy). CPSC can be multilabel.
+        use_focal=True, # addresses significant class imbalance (enables focal cross entropy)
+        metrics=['accuracy',F1Score()], # May be better to evaluate on F1 score if using early stopping
+        d_model=128, # default feature dim size (d_ffn set to 2*d_model)
+        learning_rate=learning_rate,
+        alternate_arch=True,
+        extra_dense=True,
+        att_type='transformer',
+        use_selu=False
+    )
+
+def create_crtnet_alternate_vgg1(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
+    tf.keras.backend.clear_session()
+    return crt_net_original_alt(
+        n_classes=num_classes,
+        input_shape=(None,number_of_leads),
+        n_vgg_blocks=1, # increased signal length so more CNN blocks to downsample (3000 / 2**5 -> 94)
+        binary=multilabel, # set this to true if using multilabel output (disables softmax and categorical cross entropy). CPSC can be multilabel.
+        use_focal=True, # addresses significant class imbalance (enables focal cross entropy)
+        metrics=['accuracy', F1Score()], # May be better to evaluate on F1 score if using early stopping
+        d_model=128, # default feature dim size (d_ffn set to 2*d_model)
+        learning_rate=learning_rate
+    )
+
+def create_crtnet_alternate(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
+    tf.keras.backend.clear_session()
+    return crt_net_original_alt(
+        n_classes=num_classes,
+        input_shape=(None,number_of_leads),
+        n_vgg_blocks=5, # increased signal length so more CNN blocks to downsample (3000 / 2**5 -> 94)
+        binary=multilabel, # set this to true if using multilabel output (disables softmax and categorical cross entropy). CPSC can be multilabel.
+        use_focal=True, # addresses significant class imbalance (enables focal cross entropy)
+        metrics=['accuracy', F1Score()], # May be better to evaluate on F1 score if using early stopping
+        d_model=128, # default feature dim size (d_ffn set to 2*d_model)
+        learning_rate=learning_rate
+    )
+
+def create_crtnet_rwkv(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
+    tf.keras.backend.clear_session()
+    return crt_net_modular(
+        n_classes=num_classes,
+        input_shape=(None,number_of_leads),
+        rkwv_stack_multiplier=4,
+        n_vgg_blocks=5, # increased signal length so more CNN blocks to downsample (3000 / 2**5 -> 94)
+        binary=multilabel, # set this to true if using multilabel output (disables softmax and categorical cross entropy). CPSC can be multilabel.
+        use_focal=True, # addresses significant class imbalance (enables focal cross entropy)
+        metrics=['accuracy',F1Score()], # May be better to evaluate on F1 score if using early stopping
+        d_model=128, # default feature dim size (d_ffn set to 2*d_model)
+        att_type='rwkv',
+        alternate_arch=True,
+        learning_rate=learning_rate
+    )
