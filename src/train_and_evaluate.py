@@ -12,6 +12,14 @@ import json
 import datetime
 import os
 import logging
+import random
+import numpy as np
+import tensorflow as tf
+
+# Setting seeds for reproducibility
+random.seed(42)
+np.random.seed(42)
+tf.random.set_seed(42)
 
 def setup_logging(method_name):
     log_filename = datetime.datetime.now().strftime(f"output/log_{method_name}_%Y%m%d_%H%M%S.log")
