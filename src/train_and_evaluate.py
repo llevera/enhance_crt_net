@@ -2,6 +2,7 @@ from tensorflow.keras import layers
 import keras_nlp as nlp
 import tensorflow.keras as keras
 from sklearn.metrics import classification_report, multilabel_confusion_matrix, accuracy_score, f1_score, confusion_matrix
+from sklearn.metrics import hamming_loss, accuracy_score, f1_score, average_precision_score
 from sklearn.model_selection import train_test_split, KFold
 import pandas as pd
 import tensorflow as tf
@@ -72,42 +73,11 @@ def save_and_show_plot(plt, filename):
     plt.close()
 
 def train_model(logger, model, train_x, train_y, validation_x, validation_y, epochs, batch_size, callbacks):
+    # Train the model
     history = model.fit(train_x, train_y, epochs=epochs, batch_size=batch_size, validation_data=(validation_x, validation_y), callbacks=callbacks, verbose=1)
-    
-    training_f1_scores = []
-    validation_f1_scores = []
 
-    for epoch in range(epochs):
-        # Calculate training F1 score
-        y_train_pred = model.predict(train_x)
-        if len(train_y.shape) == 1 or train_y.shape[1] == 1:
-            y_train_pred = np.argmax(y_train_pred, axis=1)
-            train_y_epoch = np.argmax(train_y, axis=1)
-        else:
-            y_train_pred = (y_train_pred > 0.5).astype(int)
-            train_y_epoch = train_y
-        
-        training_f1 = f1_score(train_y_epoch, y_train_pred, average='macro')
-        training_f1_scores.append(training_f1)
-
-        # Calculate validation F1 score
-        y_val_pred = model.predict(validation_x)
-        if len(validation_y.shape) == 1 or validation_y.shape[1] == 1:
-            y_val_pred = np.argmax(y_val_pred, axis=1)
-            validation_y_epoch = np.argmax(validation_y, axis=1)
-        else:
-            y_val_pred = (y_val_pred > 0.5).astype(int)
-            validation_y_epoch = validation_y
-        
-        validation_f1 = f1_score(validation_y_epoch, y_val_pred, average='macro')
-        validation_f1_scores.append(validation_f1)
-
-    history.history['f1_score'] = training_f1_scores
-    history.history['val_f1_score'] = validation_f1_scores
-
-    # Log the metrics
-    print_and_log(logger, f"Training F1 Scores: {training_f1_scores}")
-    print_and_log(logger, f"Validation F1 Scores: {validation_f1_scores}")
+    # Log the completion of training
+    print_and_log(logger, "Training completed")
 
     return history
 
@@ -118,15 +88,23 @@ def evaluate_model(logger, model, validation_x, validation_y, is_multilabel, cla
     else:
         validation_y = np.argmax(validation_y, axis=1)
         y_pred = np.argmax(y_pred, axis=1)
+    
+    
+    y_pred = model.predict(validation_x)
+    if is_multilabel:
+        y_pred = (y_pred > 0.5).astype(int)
+    else:
+        validation_y = np.argmax(validation_y, axis=1)
+        y_pred = np.argmax(y_pred, axis=1)
 
-    accuracy = accuracy_score(validation_y, y_pred)
-    f1 = f1_score(validation_y, y_pred, average='macro')
     report = classification_report(validation_y, y_pred, target_names=classes, zero_division=0)
     
+    # Log and save classification report
     print_and_log(logger, f"Model Method: {method_name}\n{report}")
     report_filename = generate_filename('classification_report', method_name, is_multilabel, 'txt', fold)
     save_text(report_filename, report)
 
+    # Confusion matrix
     if is_multilabel:
         multilabel_cm = multilabel_confusion_matrix(validation_y, y_pred)
         per_class_accuracies_dict = {}
@@ -147,40 +125,57 @@ def evaluate_model(logger, model, validation_x, validation_y, is_multilabel, cla
         plot_filename = generate_filename('confusion_matrix', method_name, is_multilabel, 'png', fold)
         save_and_show_plot(plt, plot_filename)
     
-    # Log per class accuracies more clearly
+    # Log per class accuracies
     accuracy_logs = "\n".join([f"Class '{class_name}' Accuracy: {accuracy:.4f}" for class_name, accuracy in per_class_accuracies_dict.items()])
     print_and_log(logger, accuracy_logs)
     
-    # Save classification report, confusion matrix, and per-class accuracies to file
+    # Save confusion matrix and per-class accuracies
     cm_filename = generate_filename('confusion_matrix', method_name, is_multilabel, 'json', fold)
     save_json(cm_filename, multilabel_cm.tolist() if is_multilabel else cm.tolist())
     accuracies_filename = generate_filename('per_class_accuracies', method_name, is_multilabel, 'json', fold)
     save_json(accuracies_filename, per_class_accuracies_dict)
 
-    # Ensure all arrays in history have the same length
-    min_length = min(len(v) for v in history.history.values())
-    for key in history.history.keys():
-        history.history[key] = history.history[key][:min_length]
-
     # Plot training history
     history_df = pd.DataFrame(history.history)
     history_df.plot(
         figsize=(10, 6), xlim=[0, epochs], ylim=[0, 1], grid=True, xlabel="Epoch",
-        style=["r--", "r--.", "b-", "b-*", "g-.", "g-*"],
         title="Training and Validation Metrics"
     )
-    plt.legend(["Train Loss", "Validation Loss", "Train Accuracy", "Validation Accuracy", "Train F1 Score", "Validation F1 Score"], loc="best")
+    plt.ylabel('Metric Value')
     history_plot_filename = generate_filename('training_history_combined', method_name, is_multilabel, 'png', fold)
     save_and_show_plot(plt, history_plot_filename)
 
-    return accuracy, f1, validation_y, y_pred
+    # Log final metrics
+    # Log metrics
+    # Calculate metrics
+    hl = hamming_loss(validation_y, y_pred)
+    sa = accuracy_score(validation_y, y_pred)
+    micro_f1 = f1_score(validation_y, y_pred, average='micro')
+    macro_f1 = f1_score(validation_y, y_pred, average='macro')
+    weighted_f1 = f1_score(validation_y, y_pred, average='weighted')
+    auc_pr = average_precision_score(validation_y, y_pred, average='micro')
+    loss = history.history['loss'][-1]
+    val_loss = history.history['val_loss'][-1]
+    accuracy = history.history['accuracy'][-1]
+    val_accuracy = history.history['val_accuracy'][-1]
+
+    print_and_log(logger, f"Hamming Loss: {hl:.4f}")
+    print_and_log(logger, f"Subset Accuracy: {sa:.4f}")
+    print_and_log(logger, f"Micro F1 Score: {micro_f1:.4f}")
+    print_and_log(logger, f"Macro F1 Score: {macro_f1:.4f}")
+    print_and_log(logger, f"Weighted F1 Score: {weighted_f1:.4f}")
+    print_and_log(logger, f"AUC-PR: {auc_pr:.4f}")   
+    print_and_log(logger, f"Final Training Loss: {loss:.4f}")
+    print_and_log(logger, f"Final Validation Loss: {val_loss:.4f}")
+    print_and_log(logger, f"Final Training Accuracy: {accuracy:.4f}")
+    print_and_log(logger, f"Final Validation Accuracy: {val_accuracy:.4f}")
+
+    return hl, sa, micro_f1, macro_f1, weighted_f1, auc_pr, loss, val_loss, accuracy, val_accuracy, validation_y, y_pred
 
 def train_and_evaluate_model(create_crtnet_method, samples, one_hot_encoding_labels, classes, is_multilabel, initial_learning_rate, number_of_leads, callbacks=None, epochs=10, batch_size=64, folds=None):
 
     method_name = create_crtnet_method.__name__
     logger = setup_logging(method_name)  # Initialize logging
-
-    raw_data = {'folds': [], 'accuracies': [], 'f1_scores': []}
 
     if classes is None:
         classes = ["Class " + str(i) for i in range(one_hot_encoding_labels.shape[1])]
@@ -189,46 +184,41 @@ def train_and_evaluate_model(create_crtnet_method, samples, one_hot_encoding_lab
         not_test_x, test_x, not_test_y, test_y = train_test_split(samples, one_hot_encoding_labels, test_size=0.1, random_state=42)
         kf = KFold(n_splits=folds, shuffle=True, random_state=42)
 
+        metrics = {
+            'hl': [], 'sa': [], 'micro_f1': [], 'macro_f1': [], 'weighted_f1': [],
+            'auc_pr': [], 'loss': [], 'val_loss': [], 'accuracy': [], 'val_accuracy': []
+        }
+
         for fold, (train_idx, val_idx) in enumerate(kf.split(not_test_x)):
             model = create_crtnet_method(number_of_leads, one_hot_encoding_labels.shape[1], is_multilabel, initial_learning_rate)
             history = train_model(logger, model, not_test_x[train_idx], not_test_y[train_idx], not_test_x[val_idx], not_test_y[val_idx], epochs, batch_size, callbacks)
 
-            accuracy, f1, y_true, y_pred = evaluate_model(logger, model, not_test_x[val_idx], not_test_y[val_idx], is_multilabel, classes, method_name, history, epochs, fold)
+            hl, sa, micro_f1, macro_f1, weighted_f1, auc_pr, loss, val_loss, accuracy, val_accuracy, validation_y, y_pred = evaluate_model(logger, model, not_test_x[val_idx], not_test_y[val_idx], is_multilabel, classes, method_name, history, epochs, fold)
 
-            raw_data['folds'].append({'train_idx': train_idx.tolist(), 'val_idx': val_idx.tolist(), 'y_true': y_true.tolist(), 'y_pred': y_pred.tolist()})
-            raw_data['accuracies'].append(accuracy)
-            raw_data['f1_scores'].append(f1)
+            for metric, value in zip(metrics.keys(), [hl, sa, micro_f1, macro_f1, weighted_f1, auc_pr, loss, val_loss, accuracy, val_accuracy]):
+                metrics[metric].append(value)
 
             model_filename = generate_filename('model', method_name, is_multilabel, 'h5', fold)
             #model.save(model_filename)
             #print_and_log(logger, f"Model saved to {model_filename}")
 
-        print_and_log(logger, f"Accuracies: {raw_data['accuracies']}")
-        print_and_log(logger, f"F1 scores: {raw_data['f1_scores']}")
-        print_and_log(logger, f"Median Accuracy: {np.median(raw_data['accuracies']):.2%}")
-        print_and_log(logger, f"Standard Deviation of Accuracy: {np.std(raw_data['accuracies']):.2%}")
-        print_and_log(logger, f"Median F1 Score: {np.median(raw_data['f1_scores']):.2%}")
-        print_and_log(logger, f"Standard Deviation of F1 Score: {np.std(raw_data['f1_scores']):.2%}")
+        metrics_mean = {metric: np.mean(values) for metric, values in metrics.items()}
+        metrics_std = {metric: np.std(values) for metric, values in metrics.items()}
+        
+        print_and_log(logger, "Metrics (Mean ± Std Dev):")
+        for metric in metrics_mean:
+            print_and_log(logger, f"{metric}: {metrics_mean[metric]:.4f} ± {metrics_std[metric]:.4f}")
 
     else:
         train_x, val_x, train_y, val_y = train_test_split(samples, one_hot_encoding_labels, test_size=0.1, random_state=42)
         model = create_crtnet_method(number_of_leads, one_hot_encoding_labels.shape[1], is_multilabel, initial_learning_rate)
         history = train_model(logger, model, train_x, train_y, val_x, val_y, epochs, batch_size, callbacks)
 
-        accuracy, f1, y_true, y_pred = evaluate_model(logger, model, val_x, val_y, is_multilabel, classes, method_name, history, epochs)
-
-        raw_data['y_true'] = y_true.tolist()
-        raw_data['y_pred'] = y_pred.tolist()
-        raw_data['accuracies'].append(accuracy)
-        raw_data['f1_scores'].append(f1)
+        hl, sa, micro_f1, macro_f1, weighted_f1, auc_pr, loss, val_loss, accuracy, val_accuracy, validation_y, y_pred = evaluate_model(logger, model, val_x, val_y, is_multilabel, classes, method_name, history, epochs)
 
         model_filename = generate_filename('model', method_name, is_multilabel, 'h5')
         #model.save(model_filename)
         #print_and_log(logger, f"Model saved to {model_filename}")
-
-    filename = generate_filename('raw_data', method_name, is_multilabel, 'json')
-    save_json(filename, raw_data)
-    print_and_log(logger, f"Raw data saved to {filename}")
 
 # GPU Configuration
 physical_devices = tf.config.experimental.list_physical_devices('GPU')
