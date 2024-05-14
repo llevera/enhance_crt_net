@@ -22,8 +22,8 @@ random.seed(42)
 np.random.seed(42)
 tf.random.set_seed(42)
 
-def setup_logging(method_name):
-    log_filename = datetime.datetime.now().strftime(f"output/log_{method_name}_%Y%m%d_%H%M%S.log")
+def setup_logging(method_name, is_multilabel, folds=None):
+    log_filename = generate_filename("log", method_name, is_multilabel, "log", folds)
     os.makedirs(os.path.dirname(log_filename), exist_ok=True)
 
     file_handler = logging.FileHandler(log_filename)
@@ -74,13 +74,6 @@ def train_model(logger, model, train_x, train_y, validation_x, validation_y, epo
 def evaluate_model(logger, model, validation_x, validation_y, is_multilabel, classes, method_name, history, epochs, fold=None):
     y_pred = model.predict(validation_x, verbose=1)
     eval_results = model.evaluate(validation_x, validation_y, verbose=1)
-    if is_multilabel:
-        y_pred = (y_pred > 0.5).astype(int)
-    else:
-        validation_y = np.argmax(validation_y, axis=1)
-        y_pred = np.argmax(y_pred, axis=1)
-    
-    y_pred = model.predict(validation_x)
     if is_multilabel:
         y_pred = (y_pred > 0.5).astype(int)
     else:
@@ -157,7 +150,7 @@ def evaluate_model(logger, model, validation_x, validation_y, is_multilabel, cla
 def train_and_evaluate_model(create_crtnet_method, samples, one_hot_encoding_labels, classes, is_multilabel, initial_learning_rate, number_of_leads, callbacks=None, epochs=10, batch_size=64, folds=None):
 
     method_name = create_crtnet_method.__name__
-    logger = setup_logging(method_name)  # Initialize logging
+    logger = setup_logging(method_name, is_multilabel, folds)  # Initialize logging
 
     if classes is None:
         classes = ["Class " + str(i) for i in range(one_hot_encoding_labels.shape[1])]
@@ -173,6 +166,8 @@ def train_and_evaluate_model(create_crtnet_method, samples, one_hot_encoding_lab
 
         for fold, (train_idx, val_idx) in enumerate(kf.split(not_test_x)):
             model = create_crtnet_method(number_of_leads, one_hot_encoding_labels.shape[1], is_multilabel, initial_learning_rate)
+            print_and_log(logger, model.summary())
+
             history = train_model(logger, model, not_test_x[train_idx], not_test_y[train_idx], not_test_x[val_idx], not_test_y[val_idx], epochs, batch_size, callbacks)
 
             hl, sa, micro_f1, macro_f1, weighted_f1, auc_pr, eval_loss, eval_accuracy, validation_y, y_pred = evaluate_model(logger, model, not_test_x[val_idx], not_test_y[val_idx], is_multilabel, classes, method_name, history, epochs, fold)
@@ -194,6 +189,8 @@ def train_and_evaluate_model(create_crtnet_method, samples, one_hot_encoding_lab
     else:
         train_x, val_x, train_y, val_y = train_test_split(samples, one_hot_encoding_labels, test_size=0.1, random_state=42)
         model = create_crtnet_method(number_of_leads, one_hot_encoding_labels.shape[1], is_multilabel, initial_learning_rate)
+        print_and_log(logger, model.summary())
+
         history = train_model(logger, model, train_x, train_y, val_x, val_y, epochs, batch_size, callbacks)
 
         hl, sa, micro_f1, macro_f1, weighted_f1, auc_pr, eval_loss, eval_accuracy, validation_y, y_pred = evaluate_model(logger, model, val_x, val_y, is_multilabel, classes, method_name, history, epochs)
@@ -205,16 +202,14 @@ def train_and_evaluate_model(create_crtnet_method, samples, one_hot_encoding_lab
 # GPU Configuration
 physical_devices = tf.config.experimental.list_physical_devices('GPU')
 if physical_devices:
-    logger = setup_logging('gpu_setup')
-    print_and_log(logger, f'Physical devices found: {physical_devices}')
+    print(f'Physical devices found: {physical_devices}')
     mem_growth = tf.config.experimental.get_memory_growth(physical_devices[0])
-    print_and_log(logger, f'Memory growth of device 0: {mem_growth}')
+    print(f'Memory growth of device 0: {mem_growth}')
     if not mem_growth:
         try:
             tf.config.experimental.set_memory_growth(physical_devices[0], True)
-            print_and_log(logger, f'Memory growth of device 0: {tf.config.experimental.get_memory_growth(physical_devices[0])} (now enabled)')
+            print(f'Memory growth of device 0: {tf.config.experimental.get_memory_growth(physical_devices[0])} (now enabled)')
         except Exception as e:
-            print_and_log(logger, f'Failed to modify device (likely already initialized): {e}')
+            print(f'Failed to modify device (likely already initialized): {e}')
 else:
-    logger = setup_logging('gpu_setup')
-    print_and_log(logger, 'Physical device not found')
+    print('Physical device not found')
