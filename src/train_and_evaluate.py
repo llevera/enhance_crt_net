@@ -50,16 +50,6 @@ def setup_logging(method_name):
 def print_and_log(logger, message):
     logger.info(message)
 
-def save_json(filename, data):
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
-    with open(filename, 'w') as f:
-        json.dump(data, f, indent=4)
-
-def save_text(filename, data):
-    os.makedirs(os.path.dirname(filename), exist_ok=True)
-    with open(filename, 'w') as f:
-        f.write(data)
-
 def generate_filename(prefix, method_name, is_multilabel, extension, fold=None):
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     multilabel_str = 'multilabel' if is_multilabel else 'singlelabel'
@@ -82,13 +72,13 @@ def train_model(logger, model, train_x, train_y, validation_x, validation_y, epo
     return history
 
 def evaluate_model(logger, model, validation_x, validation_y, is_multilabel, classes, method_name, history, epochs, fold=None):
-    y_pred = model.predict(validation_x)
+    y_pred = model.predict(validation_x, verbose=1)
+    eval_results = model.evaluate(validation_x, validation_y, verbose=1)
     if is_multilabel:
         y_pred = (y_pred > 0.5).astype(int)
     else:
         validation_y = np.argmax(validation_y, axis=1)
         y_pred = np.argmax(y_pred, axis=1)
-    
     
     y_pred = model.predict(validation_x)
     if is_multilabel:
@@ -101,8 +91,6 @@ def evaluate_model(logger, model, validation_x, validation_y, is_multilabel, cla
     
     # Log and save classification report
     print_and_log(logger, f"Model Method: {method_name}\n{report}")
-    report_filename = generate_filename('classification_report', method_name, is_multilabel, 'txt', fold)
-    save_text(report_filename, report)
 
     # Confusion matrix
     if is_multilabel:
@@ -115,8 +103,10 @@ def evaluate_model(logger, model, validation_x, validation_y, is_multilabel, cla
         
     else:
         cm = confusion_matrix(validation_y, y_pred)
+        
         per_class_accuracies = cm.diagonal() / cm.sum(axis=1)
         per_class_accuracies_dict = {classes[i]: per_class_accuracies[i] for i in range(len(classes))}
+
         plt.figure(figsize=(10, 8))
         sns.heatmap(cm, annot=True, fmt="d", cmap='Reds', xticklabels=classes, yticklabels=classes)
         plt.ylabel('True label')
@@ -129,11 +119,8 @@ def evaluate_model(logger, model, validation_x, validation_y, is_multilabel, cla
     accuracy_logs = "\n".join([f"Class '{class_name}' Accuracy: {accuracy:.4f}" for class_name, accuracy in per_class_accuracies_dict.items()])
     print_and_log(logger, accuracy_logs)
     
-    # Save confusion matrix and per-class accuracies
+    # Save confusion matrix
     cm_filename = generate_filename('confusion_matrix', method_name, is_multilabel, 'json', fold)
-    save_json(cm_filename, multilabel_cm.tolist() if is_multilabel else cm.tolist())
-    accuracies_filename = generate_filename('per_class_accuracies', method_name, is_multilabel, 'json', fold)
-    save_json(accuracies_filename, per_class_accuracies_dict)
 
     # Plot training history
     history_df = pd.DataFrame(history.history)
@@ -145,19 +132,15 @@ def evaluate_model(logger, model, validation_x, validation_y, is_multilabel, cla
     history_plot_filename = generate_filename('training_history_combined', method_name, is_multilabel, 'png', fold)
     save_and_show_plot(plt, history_plot_filename)
 
-    # Log final metrics
-    # Log metrics
-    # Calculate metrics
     hl = hamming_loss(validation_y, y_pred)
     sa = accuracy_score(validation_y, y_pred)
     micro_f1 = f1_score(validation_y, y_pred, average='micro')
     macro_f1 = f1_score(validation_y, y_pred, average='macro')
     weighted_f1 = f1_score(validation_y, y_pred, average='weighted')
     auc_pr = average_precision_score(validation_y, y_pred, average='micro')
-    loss = history.history['loss'][-1]
-    val_loss = history.history['val_loss'][-1]
-    accuracy = history.history['accuracy'][-1]
-    val_accuracy = history.history['val_accuracy'][-1]
+
+    eval_loss = eval_results[0]
+    eval_accuracy = eval_results[1]
 
     print_and_log(logger, f"Hamming Loss: {hl:.4f}")
     print_and_log(logger, f"Subset Accuracy: {sa:.4f}")
@@ -165,12 +148,11 @@ def evaluate_model(logger, model, validation_x, validation_y, is_multilabel, cla
     print_and_log(logger, f"Macro F1 Score: {macro_f1:.4f}")
     print_and_log(logger, f"Weighted F1 Score: {weighted_f1:.4f}")
     print_and_log(logger, f"AUC-PR: {auc_pr:.4f}")   
-    print_and_log(logger, f"Final Training Loss: {loss:.4f}")
-    print_and_log(logger, f"Final Validation Loss: {val_loss:.4f}")
-    print_and_log(logger, f"Final Training Accuracy: {accuracy:.4f}")
-    print_and_log(logger, f"Final Validation Accuracy: {val_accuracy:.4f}")
+    print_and_log(logger, f"Evaluate results: {eval_results}")
+    print_and_log(logger, f"Evaluated Validation Loss: {eval_loss:.4f}")
+    print_and_log(logger, f"Evaluated Validation Accuracy: {eval_accuracy:.4f}")
 
-    return hl, sa, micro_f1, macro_f1, weighted_f1, auc_pr, loss, val_loss, accuracy, val_accuracy, validation_y, y_pred
+    return hl, sa, micro_f1, macro_f1, weighted_f1, auc_pr, eval_loss, eval_accuracy, validation_y, y_pred
 
 def train_and_evaluate_model(create_crtnet_method, samples, one_hot_encoding_labels, classes, is_multilabel, initial_learning_rate, number_of_leads, callbacks=None, epochs=10, batch_size=64, folds=None):
 
@@ -186,16 +168,16 @@ def train_and_evaluate_model(create_crtnet_method, samples, one_hot_encoding_lab
 
         metrics = {
             'hl': [], 'sa': [], 'micro_f1': [], 'macro_f1': [], 'weighted_f1': [],
-            'auc_pr': [], 'loss': [], 'val_loss': [], 'accuracy': [], 'val_accuracy': []
+            'auc_pr': [], 'eval_loss': [], 'eval_accuracy': []
         }
 
         for fold, (train_idx, val_idx) in enumerate(kf.split(not_test_x)):
             model = create_crtnet_method(number_of_leads, one_hot_encoding_labels.shape[1], is_multilabel, initial_learning_rate)
             history = train_model(logger, model, not_test_x[train_idx], not_test_y[train_idx], not_test_x[val_idx], not_test_y[val_idx], epochs, batch_size, callbacks)
 
-            hl, sa, micro_f1, macro_f1, weighted_f1, auc_pr, loss, val_loss, accuracy, val_accuracy, validation_y, y_pred = evaluate_model(logger, model, not_test_x[val_idx], not_test_y[val_idx], is_multilabel, classes, method_name, history, epochs, fold)
+            hl, sa, micro_f1, macro_f1, weighted_f1, auc_pr, eval_loss, eval_accuracy, validation_y, y_pred = evaluate_model(logger, model, not_test_x[val_idx], not_test_y[val_idx], is_multilabel, classes, method_name, history, epochs, fold)
 
-            for metric, value in zip(metrics.keys(), [hl, sa, micro_f1, macro_f1, weighted_f1, auc_pr, loss, val_loss, accuracy, val_accuracy]):
+            for metric, value in zip(metrics.keys(), [hl, sa, micro_f1, macro_f1, weighted_f1, auc_pr, eval_loss, eval_accuracy]):
                 metrics[metric].append(value)
 
             model_filename = generate_filename('model', method_name, is_multilabel, 'h5', fold)
@@ -214,7 +196,7 @@ def train_and_evaluate_model(create_crtnet_method, samples, one_hot_encoding_lab
         model = create_crtnet_method(number_of_leads, one_hot_encoding_labels.shape[1], is_multilabel, initial_learning_rate)
         history = train_model(logger, model, train_x, train_y, val_x, val_y, epochs, batch_size, callbacks)
 
-        hl, sa, micro_f1, macro_f1, weighted_f1, auc_pr, loss, val_loss, accuracy, val_accuracy, validation_y, y_pred = evaluate_model(logger, model, val_x, val_y, is_multilabel, classes, method_name, history, epochs)
+        hl, sa, micro_f1, macro_f1, weighted_f1, auc_pr, eval_loss, eval_accuracy, validation_y, y_pred = evaluate_model(logger, model, val_x, val_y, is_multilabel, classes, method_name, history, epochs)
 
         model_filename = generate_filename('model', method_name, is_multilabel, 'h5')
         #model.save(model_filename)
