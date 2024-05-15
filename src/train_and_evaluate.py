@@ -93,7 +93,7 @@ def evaluate_model(logger, model, validation_x, validation_y, is_multilabel, cla
         sns.heatmap(cm, annot=True, fmt="d", cmap='Reds', xticklabels=classes, yticklabels=classes)
         plt.ylabel('True label')
         plt.xlabel('Predicted label')
-        plt.title(f'Confusion Matrix: {method_name}')
+        plt.title(f'Confusion Matrix')
         plot_filename = generate_filename('confusion_matrix', method_name, is_multilabel, 'png', fold)
         save_and_show_plot(plt, plot_filename)
     
