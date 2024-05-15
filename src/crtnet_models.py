@@ -461,6 +461,19 @@ def create_crtnet_dense_noselu(number_of_leads=1, num_classes=5, multilabel=Fals
         use_selu=False
     )
 
+def create_crtnet_original_vgg1(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
+    tf.keras.backend.clear_session()
+    return crt_net_original(
+        n_classes=num_classes,
+        input_shape=(None,number_of_leads),
+        n_vgg_blocks=1, # increased signal length so more CNN blocks to downsample (3000 / 2**5 -> 94)
+        binary=multilabel, # set this to true if using multilabel output (disables softmax and categorical cross entropy). CPSC can be multilabel.
+        use_focal=True, # addresses significant class imbalance (enables focal cross entropy)
+        metrics=['accuracy', F1Score()], # May be better to evaluate on F1 score if using early stopping
+        d_model=128, # default feature dim size (d_ffn set to 2*d_model)
+        learning_rate=learning_rate
+    )
+
 def create_crtnet_alternate_vgg1(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
     tf.keras.backend.clear_session()
     return crt_net_original_alt(
