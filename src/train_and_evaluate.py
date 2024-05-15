@@ -2,7 +2,7 @@ from tensorflow.keras import layers
 import keras_nlp as nlp
 import tensorflow.keras as keras
 from sklearn.metrics import classification_report, multilabel_confusion_matrix, accuracy_score, f1_score, confusion_matrix
-from sklearn.metrics import hamming_loss, accuracy_score, f1_score, average_precision_score
+from sklearn.metrics import hamming_loss, average_precision_score
 from sklearn.model_selection import train_test_split, KFold
 import pandas as pd
 import tensorflow as tf
@@ -14,8 +14,6 @@ import datetime
 import os
 import logging
 import random
-import numpy as np
-import tensorflow as tf
 
 # Setting seeds for reproducibility
 random.seed(42)
@@ -63,12 +61,8 @@ def save_and_show_plot(plt, filename):
     plt.close()
 
 def train_model(logger, model, train_x, train_y, validation_x, validation_y, epochs, batch_size, callbacks):
-    # Train the model
     history = model.fit(train_x, train_y, epochs=epochs, batch_size=batch_size, validation_data=(validation_x, validation_y), callbacks=callbacks, verbose=1)
-
-    # Log the completion of training
     print_and_log(logger, "Training completed")
-
     return history
 
 def evaluate_model(logger, model, validation_x, validation_y, is_multilabel, classes, method_name, history, epochs, fold=None):
@@ -81,11 +75,8 @@ def evaluate_model(logger, model, validation_x, validation_y, is_multilabel, cla
         y_pred = np.argmax(y_pred, axis=1)
 
     report = classification_report(validation_y, y_pred, target_names=classes, zero_division=0)
-    
-    # Log and save classification report
     print_and_log(logger, f"Model Method: {method_name}\n{report}")
 
-    # Confusion matrix
     if is_multilabel:
         multilabel_cm = multilabel_confusion_matrix(validation_y, y_pred)
         per_class_accuracies_dict = {}
@@ -93,10 +84,8 @@ def evaluate_model(logger, model, validation_x, validation_y, is_multilabel, cla
             tn, fp, fn, tp = multilabel_cm[i].ravel()
             class_accuracy = (tp + tn) / (tp + tn + fp + fn)
             per_class_accuracies_dict[class_name] = class_accuracy
-        
     else:
         cm = confusion_matrix(validation_y, y_pred)
-        
         per_class_accuracies = cm.diagonal() / cm.sum(axis=1)
         per_class_accuracies_dict = {classes[i]: per_class_accuracies[i] for i in range(len(classes))}
 
@@ -108,14 +97,9 @@ def evaluate_model(logger, model, validation_x, validation_y, is_multilabel, cla
         plot_filename = generate_filename('confusion_matrix', method_name, is_multilabel, 'png', fold)
         save_and_show_plot(plt, plot_filename)
     
-    # Log per class accuracies
     accuracy_logs = "\n".join([f"Class '{class_name}' Accuracy: {accuracy:.4f}" for class_name, accuracy in per_class_accuracies_dict.items()])
     print_and_log(logger, accuracy_logs)
-    
-    # Save confusion matrix
-    cm_filename = generate_filename('confusion_matrix', method_name, is_multilabel, 'json', fold)
 
-    # Plot training history
     history_df = pd.DataFrame(history.history)
     history_df.plot(
         figsize=(10, 6), xlim=[0, epochs], ylim=[0, 1], grid=True, xlabel="Epoch",
@@ -130,39 +114,44 @@ def evaluate_model(logger, model, validation_x, validation_y, is_multilabel, cla
     micro_f1 = f1_score(validation_y, y_pred, average='micro')
     macro_f1 = f1_score(validation_y, y_pred, average='macro')
     weighted_f1 = f1_score(validation_y, y_pred, average='weighted')
-    auc_pr = average_precision_score(validation_y, y_pred, average='micro')
+
+    if validation_y.ndim == 2 and y_pred.ndim == 2:
+        auc_pr = average_precision_score(validation_y, y_pred, average='micro')
+    else:
+        auc_pr = -1
+        print_and_log(logger, "Skipping AUC-PR calculation because validation_y or y_pred is not 2D")
 
     eval_loss = eval_results[0]
     eval_accuracy = eval_results[1]
 
-    print_and_log(logger, f"Hamming Loss: {hl:.4f}")
-    print_and_log(logger, f"Subset Accuracy: {sa:.4f}")
-    print_and_log(logger, f"Micro F1 Score: {micro_f1:.4f}")
-    print_and_log(logger, f"Macro F1 Score: {macro_f1:.4f}")
-    print_and_log(logger, f"Weighted F1 Score: {weighted_f1:.4f}")
-    print_and_log(logger, f"AUC-PR: {auc_pr:.4f}")   
-    print_and_log(logger, f"Evaluate results: {eval_results}")
-    print_and_log(logger, f"Evaluated Validation Loss: {eval_loss:.4f}")
-    print_and_log(logger, f"Evaluated Validation Accuracy: {eval_accuracy:.4f}")
+    eval_metrics = {
+        'hamming_loss': hl,
+        'subset_accuracy': sa,
+        'micro_f1': micro_f1,
+        'macro_f1': macro_f1,
+        'weighted_f1': weighted_f1,
+        'auc_pr': auc_pr,
+        'eval_loss': eval_loss,
+        'eval_accuracy': eval_accuracy
+    }
 
-    return hl, sa, micro_f1, macro_f1, weighted_f1, auc_pr, eval_loss, eval_accuracy, validation_y, y_pred
+    for metric, value in eval_metrics.items():
+        print_and_log(logger, f"{metric.replace('_', ' ').title()}: {value:.4f}")
+
+    return eval_metrics, validation_y, y_pred, history.history
 
 def train_and_evaluate_model(create_crtnet_method, samples, one_hot_encoding_labels, classes, is_multilabel, initial_learning_rate, number_of_leads, callbacks=None, epochs=10, batch_size=64, folds=None):
-
     method_name = create_crtnet_method.__name__
-    logger = setup_logging(method_name, is_multilabel, folds)  # Initialize logging
+    logger = setup_logging(method_name, is_multilabel, folds)
 
     if classes is None:
         classes = ["Class " + str(i) for i in range(one_hot_encoding_labels.shape[1])]
 
+    all_folds_data = []
+
     if folds:
         not_test_x, test_x, not_test_y, test_y = train_test_split(samples, one_hot_encoding_labels, test_size=0.1, random_state=42)
         kf = KFold(n_splits=folds, shuffle=True, random_state=42)
-
-        metrics = {
-            'hl': [], 'sa': [], 'micro_f1': [], 'macro_f1': [], 'weighted_f1': [],
-            'auc_pr': [], 'eval_loss': [], 'eval_accuracy': []
-        }
 
         for fold, (train_idx, val_idx) in enumerate(kf.split(not_test_x)):
             model = create_crtnet_method(number_of_leads, one_hot_encoding_labels.shape[1], is_multilabel, initial_learning_rate)
@@ -170,18 +159,24 @@ def train_and_evaluate_model(create_crtnet_method, samples, one_hot_encoding_lab
 
             history = train_model(logger, model, not_test_x[train_idx], not_test_y[train_idx], not_test_x[val_idx], not_test_y[val_idx], epochs, batch_size, callbacks)
 
-            hl, sa, micro_f1, macro_f1, weighted_f1, auc_pr, eval_loss, eval_accuracy, validation_y, y_pred = evaluate_model(logger, model, not_test_x[val_idx], not_test_y[val_idx], is_multilabel, classes, method_name, history, epochs, fold)
+            eval_metrics, val_y, pred_y, history_data = evaluate_model(logger, model, not_test_x[val_idx], not_test_y[val_idx], is_multilabel, classes, method_name, history, epochs, fold)
 
-            for metric, value in zip(metrics.keys(), [hl, sa, micro_f1, macro_f1, weighted_f1, auc_pr, eval_loss, eval_accuracy]):
-                metrics[metric].append(value)
+            fold_data = {
+                'fold': fold,
+                'evaluation_metrics': eval_metrics,
+                'validation_labels': val_y.tolist(),
+                'predicted_labels': pred_y.tolist(),
+                'training_history': history_data
+            }
+            all_folds_data.append(fold_data)
 
-            model_filename = generate_filename('model', method_name, is_multilabel, 'h5', fold)
-            #model.save(model_filename)
-            #print_and_log(logger, f"Model saved to {model_filename}")
+        metrics_mean = {metric: np.mean([fold_data['evaluation_metrics'][metric] for fold_data in all_folds_data]) for metric in all_folds_data[0]['evaluation_metrics'].keys()}
+        metrics_std = {metric: np.std([fold_data['evaluation_metrics'][metric] for fold_data in all_folds_data]) for metric in all_folds_data[0]['evaluation_metrics'].keys()}
 
-        metrics_mean = {metric: np.mean(values) for metric, values in metrics.items()}
-        metrics_std = {metric: np.std(values) for metric, values in metrics.items()}
-        
+        training_run_summary = {
+            'mean_metrics': metrics_mean,
+            'std_metrics': metrics_std
+        }
         print_and_log(logger, "Metrics (Mean ± Std Dev):")
         for metric in metrics_mean:
             print_and_log(logger, f"{metric}: {metrics_mean[metric]:.4f} ± {metrics_std[metric]:.4f}")
@@ -193,11 +188,32 @@ def train_and_evaluate_model(create_crtnet_method, samples, one_hot_encoding_lab
 
         history = train_model(logger, model, train_x, train_y, val_x, val_y, epochs, batch_size, callbacks)
 
-        hl, sa, micro_f1, macro_f1, weighted_f1, auc_pr, eval_loss, eval_accuracy, validation_y, y_pred = evaluate_model(logger, model, val_x, val_y, is_multilabel, classes, method_name, history, epochs)
+        eval_metrics, val_y, pred_y, history_data = evaluate_model(logger, model, val_x, val_y, is_multilabel, classes, method_name, history, epochs)
 
-        model_filename = generate_filename('model', method_name, is_multilabel, 'h5')
-        #model.save(model_filename)
-        #print_and_log(logger, f"Model saved to {model_filename}")
+        fold_data = {
+            'fold': 0,
+            'evaluation_metrics': eval_metrics,
+            'validation_labels': val_y.tolist(),
+            'predicted_labels': pred_y.tolist(),
+            'training_history': history_data
+        }
+        all_folds_data.append(fold_data)
+
+        metrics_mean = {metric: eval_metrics[metric] for metric in eval_metrics.keys()}
+        metrics_std = {metric: 0 for metric in eval_metrics.keys()}  # Standard deviation is zero since there's only one fold
+
+        training_run_summary = {
+            'mean_metrics': metrics_mean,
+            'std_metrics': metrics_std
+        }
+        print_and_log(logger, "Metrics (Mean ± Std Dev):")
+        for metric in metrics_mean:
+            print_and_log(logger, f"{metric}: {metrics_mean[metric]:.4f} ± {metrics_std[metric]:.4f}")
+
+    return {
+        'folds_data': all_folds_data,
+        'training_run_summary': training_run_summary
+    }
 
 # GPU Configuration
 physical_devices = tf.config.experimental.list_physical_devices('GPU')
