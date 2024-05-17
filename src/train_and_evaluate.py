@@ -14,6 +14,8 @@ import datetime
 import os
 import logging
 import random
+import io
+import contextlib
 
 # Setting seeds for reproducibility
 random.seed(42)
@@ -59,6 +61,13 @@ def save_and_show_plot(plt, filename):
     plt.savefig(filename)
     plt.show()
     plt.close()
+
+def print_and_log_model(logger, model):
+    summary_buffer = io.StringIO()
+    with contextlib.redirect_stdout(summary_buffer):
+        model.summary()
+    model_summary_str = summary_buffer.getvalue()
+    print_and_log(logger, model_summary_str)
 
 def train_model(logger, model, train_x, train_y, validation_x, validation_y, epochs, batch_size, callbacks):
     history = model.fit(train_x, train_y, epochs=epochs, batch_size=batch_size, validation_data=(validation_x, validation_y), callbacks=callbacks, verbose=1)
@@ -155,7 +164,7 @@ def train_and_evaluate_model(create_crtnet_method, samples, one_hot_encoding_lab
 
         for fold, (train_idx, val_idx) in enumerate(kf.split(not_test_x)):
             model = create_crtnet_method(number_of_leads, one_hot_encoding_labels.shape[1], is_multilabel, initial_learning_rate)
-            print_and_log(logger, model.summary())
+            print_and_log_model(logger, model)
 
             history = train_model(logger, model, not_test_x[train_idx], not_test_y[train_idx], not_test_x[val_idx], not_test_y[val_idx], epochs, batch_size, callbacks)
 
@@ -170,8 +179,10 @@ def train_and_evaluate_model(create_crtnet_method, samples, one_hot_encoding_lab
             }
             all_folds_data.append(fold_data)
 
-        metrics_mean = {metric: np.mean([fold_data['evaluation_metrics'][metric] for fold_data in all_folds_data]) for metric in all_folds_data[0]['evaluation_metrics'].keys()}
-        metrics_std = {metric: np.std([fold_data['evaluation_metrics'][metric] for fold_data in all_folds_data]) for metric in all_folds_data[0]['evaluation_metrics'].keys()}
+        metrics_data = {metric: [fold_data['evaluation_metrics'][metric] for fold_data in all_folds_data] for metric in all_folds_data[0]['evaluation_metrics'].keys()}
+
+        metrics_mean = {metric: np.mean(values) for metric, values in metrics_data.items()}
+        metrics_std = {metric: np.std(values) for metric, values in metrics_data.items()}
 
         training_run_summary = {
             'mean_metrics': metrics_mean,
@@ -181,10 +192,21 @@ def train_and_evaluate_model(create_crtnet_method, samples, one_hot_encoding_lab
         for metric in metrics_mean:
             print_and_log(logger, f"{metric}: {metrics_mean[metric]:.4f} ± {metrics_std[metric]:.4f}")
 
+        # Box plot for each metric
+        metrics_df = pd.DataFrame(metrics_data)
+        metrics_df = metrics_df.melt(var_name='Metric', value_name='Score')
+        plt.figure(figsize=(12, 8))
+        sns.boxplot(x='Metric', y='Score', data=metrics_df)
+        plt.title('Evaluation Metrics Across Folds')
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        boxplot_filename = generate_filename('boxplot_metrics', method_name, is_multilabel, 'png')
+        save_and_show_plot(plt, boxplot_filename)
+
     else:
         train_x, val_x, train_y, val_y = train_test_split(samples, one_hot_encoding_labels, test_size=0.1, random_state=42)
         model = create_crtnet_method(number_of_leads, one_hot_encoding_labels.shape[1], is_multilabel, initial_learning_rate)
-        print_and_log(logger, model.summary())
+        print_and_log_model(logger, model)
 
         history = train_model(logger, model, train_x, train_y, val_x, val_y, epochs, batch_size, callbacks)
 
