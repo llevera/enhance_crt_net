@@ -133,28 +133,36 @@ def crt_net_modular(
         pass  # No CNN block
         
     if rnn_type == 'bigru':
+        rnn_dimension_multiplier = 2
         if alternate_arch:
             x = BiGRU(d_model, activation=tf.keras.layers.LeakyReLU, activation_kwargs=dict(alpha=0.3), dropout=0.2)(x)
         else:
             x = BiGRU(d_model)(x)
+    if rnn_type == 'rwkv':
+        rnn_dimension_multiplier = 1
+        if alternate_arch:
+            x = StackedRWKV(n_blocks=4 * 2, d_ffn=d_model, dropout=0.2)(x)
+        else:
+            x = StackedRWKV(n_blocks=4 * 2, d_ffn=d_model)(x)
     elif rnn_type == 'none':
+        rnn_dimension_multiplier = 1
         pass  # No RNN block
     
     if att_type == 'transformer':
         if alternate_arch:
-            x = StackedTransformerEncoder(4, 8, d_model * 2, max_wavelength=2048, dropout=0.2)(x)
+            x = StackedTransformerEncoder(4, 8, d_model * rnn_dimension_multiplier, max_wavelength=2048, dropout=0.2)(x)
         else:
-            x = StackedTransformerEncoder(4, 8, d_model * 2)(x)
+            x = StackedTransformerEncoder(4, 8, d_model * rnn_dimension_multiplier)(x)
     elif att_type == 'our_transformer':
         if alternate_arch:
-            x = StackedTransformerEncoderCustom(4, 8, d_model * 2, max_wavelength=2048, dropout=0.2)(x)
+            x = StackedTransformerEncoderCustom(4, 8, d_model * rnn_dimension_multiplier, max_wavelength=2048, dropout=0.2)(x)
         else:
-            x = StackedTransformerEncoderCustom(4, 8, d_model * 2)(x)
+            x = StackedTransformerEncoderCustom(4, 8, d_model * rnn_dimension_multiplier)(x)
     elif att_type == 'rwkv':
         if alternate_arch:
-            x = StackedRWKV(n_blocks=4 * rkwv_stack_multiplier, d_ffn=d_model * 2, dropout=0.2)(x)
+            x = StackedRWKV(n_blocks=4 * 2, d_ffn=d_model * rnn_dimension_multiplier, dropout=0.2)(x)
         else:
-            x = StackedRWKV(n_blocks=4 * rkwv_stack_multiplier, d_ffn=d_model * 2)(x)
+            x = StackedRWKV(n_blocks=4 * 2, d_ffn=d_model * rnn_dimension_multiplier)(x)
     elif att_type == 'none':
         pass  # No Transformer block
 
@@ -164,10 +172,10 @@ def crt_net_modular(
     dense_activation = 'selu' if alternate_arch and use_selu else 'relu'
 
     if extra_dense:
-        x = tf.keras.layers.Dense(2 * d_model, activation=dense_activation)(x)
+        x = tf.keras.layers.Dense(rnn_dimension_multiplier * d_model, activation=dense_activation)(x)
         x = tf.keras.layers.Dense(d_model, activation=dense_activation)(x)
 
-    x = tf.keras.layers.Dense(2 * n_classes, activation=dense_activation)(x)
+    x = tf.keras.layers.Dense(rnn_dimension_multiplier * n_classes, activation=dense_activation)(x)
     
     model = model_compile_helper(input, x, n_classes, binary, use_focal, metrics, learning_rate)
     return model
@@ -646,6 +654,24 @@ def cnn_rwkv(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0
         d_model=128, # default feature dim size (d_ffn set to 2*d_model)
         att_type='rwkv',
         rnn_type='none', 
+        cnn_type='vggnet',
+        alternate_arch=True,
+        learning_rate=learning_rate
+    )
+
+def cnn_rwkv_transformer(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
+    tf.keras.backend.clear_session()
+    return crt_net_modular(
+        n_classes=num_classes,
+        input_shape=(None,number_of_leads),
+        rkwv_stack_multiplier=4,
+        n_vgg_blocks=5, # increased signal length so more CNN blocks to downsample (3000 / 2**5 -> 94)
+        binary=multilabel, # set this to true if using multilabel output (disables softmax and categorical cross entropy). CPSC can be multilabel.
+        use_focal=True, # addresses significant class imbalance (enables focal cross entropy)
+        metrics=['accuracy',F1Score()], # May be better to evaluate on F1 score if using early stopping
+        d_model=128, # default feature dim size (d_ffn set to 2*d_model)
+        att_type='transformer',
+        rnn_type='rwkv', 
         cnn_type='vggnet',
         alternate_arch=True,
         learning_rate=learning_rate
