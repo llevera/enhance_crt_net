@@ -126,7 +126,7 @@ def crt_net_modular(
         else:
             x = VGGNet(d_model, n_blocks=n_vgg_blocks)(x)
     elif cnn_type == 'squeezenet':
-        x = SqueezeNet()(x)
+        x = SqueezeNet(dropout=0.2)(x)
     elif cnn_type == 'cnnsvm':
         raise NotImplementedError()
     elif cnn_type == 'none':
@@ -393,32 +393,33 @@ class TransformerEncoder(tf.keras.layers.Layer):
         return x
 
 class FireModule(tf.keras.layers.Layer):
-    def __init__(self, squeeze_channels, expand_channels, **kwargs):
+    def __init__(self, squeeze_channels, expand_channels, dropout=0.0, **kwargs):
         super(FireModule, self).__init__(**kwargs)
         self.squeeze = tf.keras.layers.Conv1D(squeeze_channels, 1, activation='relu')
         self.expand1x1 = tf.keras.layers.Conv1D(expand_channels, 1, activation='relu')
         self.expand3x3 = tf.keras.layers.Conv1D(expand_channels, 3, padding='same', activation='relu')
+        self.dropout = tf.keras.layers.Dropout(dropout)
 
     def call(self, x):
         x = self.squeeze(x)
+        x = self.dropout(x)
         return tf.keras.layers.concatenate([self.expand1x1(x), self.expand3x3(x)])
 
-
 class SqueezeNet(tf.keras.layers.Layer):
-    def __init__(self, **kwargs):
+    def __init__(self, dropout=0.5, **kwargs):
         super(SqueezeNet, self).__init__(**kwargs)
         self.conv1 = tf.keras.layers.Conv1D(96, 7, strides=2, activation='relu', padding='same')
         self.maxpool1 = tf.keras.layers.MaxPooling1D(3, strides=2, padding='same')
         self.fire2 = FireModule(16, 64)
         self.fire3 = FireModule(16, 64)
-        self.fire4 = FireModule(32, 128)
+        self.fire4 = FireModule(32, 128, dropout)
         self.maxpool4 = tf.keras.layers.MaxPooling1D(3, strides=2, padding='same')
         self.fire5 = FireModule(32, 128)
         self.fire6 = FireModule(48, 192)
         self.fire7 = FireModule(48, 192)
         self.fire8 = FireModule(64, 256)
         self.maxpool8 = tf.keras.layers.MaxPooling1D(3, strides=2, padding='same')
-        self.fire9 = FireModule(64, 256)
+        self.fire9 = FireModule(64, 256, dropout)
 
     def call(self, x):
         x = self.conv1(x)
@@ -550,7 +551,22 @@ def create_crtnet_alternate(number_of_leads=1, num_classes=5, multilabel=False, 
         learning_rate=learning_rate
     )
 
-def create_crtnet_squeezenet(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
+
+def cnn_rnn_transformer(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
+    tf.keras.backend.clear_session()
+    return crt_net_modular(
+        n_classes=num_classes,
+        input_shape=(None,number_of_leads),
+        n_vgg_blocks=5, # increased signal length so more CNN blocks to downsample (3000 / 2**5 -> 94)
+        binary=multilabel, # set this to true if using multilabel output (disables softmax and categorical cross entropy). CPSC can be multilabel.
+        use_focal=True, # addresses significant class imbalance (enables focal cross entropy)
+        metrics=['accuracy',F1Score()], # May be better to evaluate on F1 score if using early stopping
+        d_model=128, # default feature dim size (d_ffn set to 2*d_model)
+        alternate_arch=True,
+        learning_rate=learning_rate
+    )
+
+def squeezenet_rnn_transformer(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
     tf.keras.backend.clear_session()
     return crt_net_modular(
         n_classes=num_classes,
@@ -566,72 +582,58 @@ def create_crtnet_squeezenet(number_of_leads=1, num_classes=5, multilabel=False,
         learning_rate=learning_rate
     )
 
-def create_crtnet_no_cnn(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
+def cnn(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
     tf.keras.backend.clear_session()
     return crt_net_modular(
         n_classes=num_classes,
         input_shape=(None, number_of_leads),
-        cnn_type='none',  
-        alternate_arch=True,
-        n_vgg_blocks=5,
-        binary=multilabel,
-        use_focal=True,
-        metrics=['accuracy', F1Score()],
-        d_model=128,
-        learning_rate=learning_rate
-    )
-
-def create_crtnet_no_rnn(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
-    tf.keras.backend.clear_session()
-    return crt_net_modular(
-        n_classes=num_classes,
-        input_shape=(None, number_of_leads),
-        rnn_type='none',  # No RNN
-        alternate_arch=True,
-        n_vgg_blocks=5,
-        binary=multilabel,
-        use_focal=True,
-        metrics=['accuracy', F1Score()],
-        d_model=128,
-        learning_rate=learning_rate
-    )
-
-def create_crtnet_just_rwkv(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
-    tf.keras.backend.clear_session()
-    return crt_net_modular(
-        n_classes=num_classes,
-        input_shape=(None,number_of_leads),
-        rkwv_stack_multiplier=4,
-        n_vgg_blocks=5, # increased signal length so more CNN blocks to downsample (3000 / 2**5 -> 94)
-        binary=multilabel, # set this to true if using multilabel output (disables softmax and categorical cross entropy). CPSC can be multilabel.
-        use_focal=True, # addresses significant class imbalance (enables focal cross entropy)
-        metrics=['accuracy',F1Score()], # May be better to evaluate on F1 score if using early stopping
-        d_model=128, # default feature dim size (d_ffn set to 2*d_model)
-        att_type='rwkv',
-        rnn_type='none',  # No RNN
-        alternate_arch=True,
-        learning_rate=learning_rate
-    )
-
-def create_crtnet_just_transformer(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
-    tf.keras.backend.clear_session()
-    return crt_net_modular(
-        n_classes=num_classes,
-        input_shape=(None,number_of_leads),
-        rkwv_stack_multiplier=4,
-        n_vgg_blocks=5, # increased signal length so more CNN blocks to downsample (3000 / 2**5 -> 94)
-        binary=multilabel, # set this to true if using multilabel output (disables softmax and categorical cross entropy). CPSC can be multilabel.
-        use_focal=True, # addresses significant class imbalance (enables focal cross entropy)
-        metrics=['accuracy',F1Score()], # May be better to evaluate on F1 score if using early stopping
-        d_model=128, # default feature dim size (d_ffn set to 2*d_model)
-        att_type='transformer',
         rnn_type='none',  
-        cnn_type='none',  
+        att_type='none',
+        cnn_type='vggnet',
         alternate_arch=True,
+        n_vgg_blocks=5,
+        binary=multilabel,
+        use_focal=True,
+        metrics=['accuracy', F1Score()],
+        d_model=128,
         learning_rate=learning_rate
     )
 
-def create_crtnet_rwkv(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
+def squeezenet(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
+    tf.keras.backend.clear_session()
+    return crt_net_modular(
+        n_classes=num_classes,
+        input_shape=(None, number_of_leads),
+        rnn_type='none',  
+        att_type='none',
+        cnn_type='squeezenet',
+        alternate_arch=True,
+        n_vgg_blocks=5,
+        binary=multilabel,
+        use_focal=True,
+        metrics=['accuracy', F1Score()],
+        d_model=128,
+        learning_rate=learning_rate
+    )
+
+def cnn_transformer(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
+    tf.keras.backend.clear_session()
+    return crt_net_modular(
+        n_classes=num_classes,
+        input_shape=(None, number_of_leads),
+        att_type='transformer',
+        rnn_type='none', 
+        cnn_type='vggnet',
+        alternate_arch=True,
+        n_vgg_blocks=5,
+        binary=multilabel,
+        use_focal=True,
+        metrics=['accuracy', F1Score()],
+        d_model=128,
+        learning_rate=learning_rate
+    )
+
+def cnn_rwkv(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
     tf.keras.backend.clear_session()
     return crt_net_modular(
         n_classes=num_classes,
@@ -643,6 +645,26 @@ def create_crtnet_rwkv(number_of_leads=1, num_classes=5, multilabel=False, learn
         metrics=['accuracy',F1Score()], # May be better to evaluate on F1 score if using early stopping
         d_model=128, # default feature dim size (d_ffn set to 2*d_model)
         att_type='rwkv',
+        rnn_type='none', 
+        cnn_type='vggnet',
+        alternate_arch=True,
+        learning_rate=learning_rate
+    )
+
+def cnn_rnn_rwkv(number_of_leads=1, num_classes=5, multilabel=False, learning_rate=0.001):
+    tf.keras.backend.clear_session()
+    return crt_net_modular(
+        n_classes=num_classes,
+        input_shape=(None,number_of_leads),
+        rkwv_stack_multiplier=4,
+        n_vgg_blocks=5, # increased signal length so more CNN blocks to downsample (3000 / 2**5 -> 94)
+        binary=multilabel, # set this to true if using multilabel output (disables softmax and categorical cross entropy). CPSC can be multilabel.
+        use_focal=True, # addresses significant class imbalance (enables focal cross entropy)
+        metrics=['accuracy',F1Score()], # May be better to evaluate on F1 score if using early stopping
+        d_model=128, # default feature dim size (d_ffn set to 2*d_model)
+        att_type='rwkv',
+        rnn_type='bigru',
+        cnn_type='vggnet',
         alternate_arch=True,
         learning_rate=learning_rate
     )
